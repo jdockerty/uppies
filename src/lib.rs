@@ -5,8 +5,30 @@ use surge_ping::{Client, Config, PingIdentifier, PingSequence};
 
 pub type Result<T, E = Box<dyn std::error::Error + Send + Sync>> = std::result::Result<T, E>;
 
+pub struct PingSender {
+    dispatchers: Vec<Dispatcher>,
+}
+
+impl PingSender {
+    pub fn new(targets: Vec<String>, metrics: &Registry) -> Result<Self> {
+        Ok(Self {
+            dispatchers: targets
+                .iter()
+                .map(|t| Dispatcher::new(t.clone(), &metrics))
+                .collect::<Result<_>>()?,
+        })
+    }
+}
+
+/// Start pinging all targets from the
+pub async fn ping_targets(sender: PingSender) {
+    for d in sender.dispatchers {
+        tokio::spawn(d.run());
+    }
+}
+
 /// A dispatcher to send pings (ICMP packets) to a specified target.
-pub struct Dispatcher {
+struct Dispatcher {
     target: String,
     client: Client,
 
@@ -15,9 +37,12 @@ pub struct Dispatcher {
 }
 
 impl Dispatcher {
-    pub fn new(target: String, metrics: &Registry) -> Result<Self> {
+    fn new(target: String, metrics: &Registry) -> Result<Self> {
         let client = surge_ping::Client::new(&Config::new())?;
 
+        // TODO: this will fail running multiple.
+        //
+        // Fix this by placing metrics at the top-level for overall successful/failed pings.
         let success_count = IntCounter::new("dispatcher_success_count", "TODO")?;
         let failure_count = IntCounter::new("dispatcher_failure_count", "TODO")?;
         metrics.register(Box::new(success_count.clone())).unwrap();
@@ -34,7 +59,7 @@ impl Dispatcher {
     ///
     /// This is a blocking call and will perform continuous pings against
     /// the target.
-    pub async fn run(self) -> Result<()> {
+    async fn run(self) -> Result<()> {
         let mut pinger = self
             .client
             .pinger(

@@ -1,7 +1,7 @@
 use clap::Parser;
 
 use prometheus::Registry;
-use uppies::{Dispatcher, Result};
+use uppies::{ping_targets, PingSender, Result};
 
 #[derive(Debug, Parser)]
 struct Cli {
@@ -15,12 +15,8 @@ async fn main() -> Result<()> {
 
     let metrics = Registry::default();
 
-    for target in cli.targets {
-        let dispatcher = Dispatcher::new(target.clone(), &metrics)?;
-        tokio::spawn(dispatcher.run());
-    }
-
-    // TODO: include HTTP server to serve metrics path
+    let sender = PingSender::new(cli.targets, &metrics)?;
+    ping_targets(sender).await;
     tokio::signal::ctrl_c().await?;
 
     Ok(())
