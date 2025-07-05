@@ -4,6 +4,7 @@ use surge_ping::{Client, Config, PingIdentifier, PingSequence};
 
 pub type Result<T, E = Box<dyn std::error::Error + Send + Sync>> = std::result::Result<T, E>;
 
+/// A dispatcher to send pings (ICMP packets) to a specified target.
 pub struct Dispatcher {
     target: String,
     client: Client,

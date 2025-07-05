@@ -4,6 +4,7 @@ use uppies::{Dispatcher, Result};
 
 #[derive(Debug, Parser)]
 struct Cli {
+    /// Targets that should have pings sent to them.
     targets: Vec<String>,
 }
 
