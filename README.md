@@ -1,3 +1,3 @@
 # uppies
 
-A simple ping healthcheck service, configurable against multiple targets.
+A simple pinging service, configurable against multiple targets.
