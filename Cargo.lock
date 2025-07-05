@@ -623,6 +623,7 @@ name = "uppies"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "rand",
  "surge-ping",
  "tokio",
 ]

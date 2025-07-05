@@ -1,8 +1,8 @@
-use std::{net::IpAddr, str::FromStr};
+use std::{net::IpAddr, str::FromStr, time::Duration};
 
 use surge_ping::{Client, Config, PingIdentifier, PingSequence};
 
-pub type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
+pub type Result<T, E = Box<dyn std::error::Error + Send + Sync>> = std::result::Result<T, E>;
 
 pub struct Dispatcher {
     target: String,
@@ -18,12 +18,17 @@ impl Dispatcher {
     pub async fn run(self) -> Result<()> {
         let mut pinger = self
             .client
-            .pinger(IpAddr::from_str(&self.target)?, PingIdentifier(10))
+            .pinger(
+                IpAddr::from_str(&self.target)?,
+                PingIdentifier(rand::random()),
+            )
             .await;
 
+        let mut interval = tokio::time::interval(Duration::from_millis(10));
         loop {
+            interval.tick().await;
             let (_, duration) = pinger.ping(PingSequence(0), &[]).await?;
-            println!("{duration:?}");
+            println!("{}: {duration:?}", self.target);
         }
     }
 }
