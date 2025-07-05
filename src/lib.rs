@@ -20,7 +20,7 @@ impl PingSender {
     }
 }
 
-/// Start pinging all targets from the
+/// Start pinging all targets configured within the [`PingSender`]
 pub async fn ping_targets(sender: PingSender) {
     for d in sender.dispatchers {
         tokio::spawn(d.run());
