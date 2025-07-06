@@ -1,6 +1,8 @@
 use std::{net::IpAddr, str::FromStr, time::Duration};
 
-use prometheus::{IntCounter, Registry};
+use prometheus::{
+    Gauge, Histogram, IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry,
+};
 use surge_ping::{Client, Config, PingIdentifier, PingSequence};
 use tokio::sync::mpsc::{error::TryRecvError, Receiver, Sender};
 
@@ -15,8 +17,9 @@ pub struct PingSender {
 
 impl PingSender {
     pub fn new(targets: Vec<String>, metrics: &Registry) -> Result<Self> {
-        let success_count = IntCounter::new("ping_success_count", "TODO")?;
-        let failure_count = IntCounter::new("ping_failure_count", "TODO")?;
+        // TODO: label for target
+        let success_count = IntCounter::with_opts(Opts::new("ping_success_count", "TODO"))?;
+        let failure_count = IntCounter::with_opts(Opts::new("ping_failure_count", "TODO"))?;
         metrics.register(Box::new(success_count.clone()))?;
         metrics.register(Box::new(failure_count.clone()))?;
         Ok(Self {
