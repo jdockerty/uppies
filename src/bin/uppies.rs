@@ -15,6 +15,10 @@ use uppies::{ping_targets, PingSender, Result};
 struct Cli {
     /// Targets that should have pings sent to them.
     targets: Vec<String>,
+
+    /// Socket to bind to serve metrics.
+    #[clap(long, default_value = "0.0.0.0:9000")]
+    metrics_address: String,
 }
 
 #[tokio::main]
@@ -26,7 +30,7 @@ async fn main() -> Result<()> {
     let sender = PingSender::new(cli.targets, &metrics)?;
     ping_targets(sender).await;
 
-    let metric_listener = TcpListener::bind("0.0.0.0:9000").await?;
+    let metric_listener = TcpListener::bind(&cli.metrics_address).await?;
     tokio::spawn(async move {
         let app = Router::new()
             .route("/metrics", get(metrics_handler))
