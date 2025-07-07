@@ -23,7 +23,7 @@ pub struct PingSender {
 impl PingSender {
     const LABELS: &[&str] = &["targets"];
 
-    pub fn new(targets: Vec<String>, metrics: &Registry) -> Result<Self> {
+    pub fn new(targets: Vec<String>, ping_interval_ms: u64, metrics: &Registry) -> Result<Self> {
         let success_count = IntCounterVec::new(
             Opts::new("ping_success_count", "Counter of successful pings"),
             Self::LABELS,
@@ -37,7 +37,7 @@ impl PingSender {
         Ok(Self {
             dispatchers: targets
                 .iter()
-                .map(|t| Dispatcher::new(t.clone()))
+                .map(|t| Dispatcher::new(t.clone(), ping_interval_ms))
                 .collect::<Result<_>>()?,
             success_count,
             failure_count,
@@ -79,12 +79,14 @@ struct Dispatcher {
     client: Client,
     /// Result channel for receiving dispatched ping results.
     result_tx: Sender<Result<()>>,
+
+    ping_interval_ms: u64,
 }
 
 impl Dispatcher {
     /// Create a new [`Dispatcher`] with an accompanying [`Receiver`] that
     /// will be used to send ping results into.
-    fn new(target: String) -> Result<(Self, Receiver<Result<()>>)> {
+    fn new(target: String, ping_interval_ms: u64) -> Result<(Self, Receiver<Result<()>>)> {
         let client = surge_ping::Client::new(&Config::new())?;
 
         let (result_tx, result_rx) = tokio::sync::mpsc::channel(100);
@@ -93,6 +95,7 @@ impl Dispatcher {
                 target,
                 client,
                 result_tx,
+                ping_interval_ms,
             },
             result_rx,
         ))
@@ -111,7 +114,7 @@ impl Dispatcher {
             )
             .await;
 
-        let mut interval = tokio::time::interval(Duration::from_millis(10));
+        let mut interval = tokio::time::interval(Duration::from_millis(self.ping_interval_ms));
         loop {
             interval.tick().await;
             match pinger.ping(PingSequence(0), &[]).await {

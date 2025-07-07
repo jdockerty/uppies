@@ -19,6 +19,11 @@ struct Cli {
     /// Socket to bind to serve metrics.
     #[clap(long, default_value = "0.0.0.0:9000")]
     metrics_address: String,
+
+    /// Interval, in milliseconds, that should be between
+    /// the continous pings to configured targets.
+    #[clap(long, default_value = "250")]
+    ping_interval_ms: u64,
 }
 
 #[tokio::main]
@@ -27,7 +32,7 @@ async fn main() -> Result<()> {
 
     let metrics = Registry::default();
 
-    let sender = PingSender::new(cli.targets, &metrics)?;
+    let sender = PingSender::new(cli.targets, cli.ping_interval_ms, &metrics)?;
     ping_targets(sender).await;
 
     let metric_listener = TcpListener::bind(&cli.metrics_address).await?;
