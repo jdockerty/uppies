@@ -6,10 +6,17 @@ use tokio::sync::mpsc::{error::TryRecvError, Receiver, Sender};
 
 pub type Result<T, E = Box<dyn std::error::Error + Send + Sync>> = std::result::Result<T, E>;
 
+/// Send pings to various targets.
 pub struct PingSender {
+    /// Dispatchers send pings to the underlying targets.
+    ///
+    /// The corresponding [`Receiver`] returns the result dependent on the outcome
+    /// of the pin.g
     dispatchers: Vec<(Dispatcher, Receiver<Result<()>>)>,
 
+    /// Number of pings which were successful, labelled by the underlying target.
     success_count: IntCounterVec,
+    /// Number of pings which were unsuccessful, labelled by the underlying target.
     failure_count: IntCounterVec,
 }
 
@@ -65,13 +72,18 @@ pub async fn ping_targets(sender: PingSender) {
 
 /// A dispatcher to send pings (ICMP packets) to a specified target.
 struct Dispatcher {
+    /// The underlying target of this [`Dispatcher`], such as
+    /// '1.1.1.1'.
     target: String,
+    /// Internal client used to send ICMP packets.
     client: Client,
-
+    /// Result channel for receiving dispatched ping results.
     result_tx: Sender<Result<()>>,
 }
 
 impl Dispatcher {
+    /// Create a new [`Dispatcher`] with an accompanying [`Receiver`] that
+    /// will be used to send ping results into.
     fn new(target: String) -> Result<(Self, Receiver<Result<()>>)> {
         let client = surge_ping::Client::new(&Config::new())?;
 
