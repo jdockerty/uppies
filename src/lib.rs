@@ -1,8 +1,6 @@
 use std::{net::IpAddr, str::FromStr, time::Duration};
 
-use prometheus::{
-    Gauge, Histogram, IntCounter, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry,
-};
+use prometheus::{IntCounterVec, Opts, Registry};
 use surge_ping::{Client, Config, PingIdentifier, PingSequence};
 use tokio::sync::mpsc::{error::TryRecvError, Receiver, Sender};
 
@@ -11,15 +9,22 @@ pub type Result<T, E = Box<dyn std::error::Error + Send + Sync>> = std::result::
 pub struct PingSender {
     dispatchers: Vec<(Dispatcher, Receiver<Result<()>>)>,
 
-    success_count: IntCounter,
-    failure_count: IntCounter,
+    success_count: IntCounterVec,
+    failure_count: IntCounterVec,
 }
 
 impl PingSender {
+    const LABELS: &[&str] = &["targets"];
+
     pub fn new(targets: Vec<String>, metrics: &Registry) -> Result<Self> {
-        // TODO: label for target
-        let success_count = IntCounter::with_opts(Opts::new("ping_success_count", "TODO"))?;
-        let failure_count = IntCounter::with_opts(Opts::new("ping_failure_count", "TODO"))?;
+        let success_count = IntCounterVec::new(
+            Opts::new("ping_success_count", "Counter of successful pings"),
+            Self::LABELS,
+        )?;
+        let failure_count = IntCounterVec::new(
+            Opts::new("ping_failure_count", "Counter of failed pings"),
+            Self::LABELS,
+        )?;
         metrics.register(Box::new(success_count.clone()))?;
         metrics.register(Box::new(failure_count.clone()))?;
         Ok(Self {
@@ -39,6 +44,7 @@ pub async fn ping_targets(sender: PingSender) {
         let success_count = sender.success_count.clone();
         let failure_count = sender.failure_count.clone();
 
+        let target = dispatcher.target.clone();
         tokio::spawn(dispatcher.run());
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(10));
@@ -46,8 +52,8 @@ pub async fn ping_targets(sender: PingSender) {
                 interval.tick().await;
                 match rx.try_recv() {
                     Ok(res) => match res {
-                        Ok(_) => success_count.inc(),
-                        Err(_) => failure_count.inc(),
+                        Ok(_) => success_count.with_label_values(&[target.clone()]).inc(),
+                        Err(_) => failure_count.with_label_values(&[target.clone()]).inc(),
                     },
                     Err(TryRecvError::Empty) => {}
                     Err(TryRecvError::Disconnected) => panic!("send disconnected"),
