@@ -3,7 +3,7 @@ use std::{net::IpAddr, str::FromStr, time::Duration};
 use prometheus::{IntCounterVec, Opts, Registry};
 use surge_ping::{Client, Config, PingIdentifier, PingSequence};
 use tokio::sync::mpsc::{error::TryRecvError, Receiver, Sender};
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 pub type Result<T, E = Box<dyn std::error::Error + Send + Sync>> = std::result::Result<T, E>;
 
@@ -52,10 +52,14 @@ pub async fn ping_targets(sender: PingSender) {
         let success_count = sender.success_count.clone();
         let failure_count = sender.failure_count.clone();
 
+        // Check the receive channel 2x faster than the known ping interval
+        // to ensure that all sends are caught in good time.
+        let receive_interval = dispatcher.ping_interval_ms.div_ceil(2);
         let target = dispatcher.target.clone();
+        info!(target, "starting dispatcher tasks");
         tokio::spawn(dispatcher.run());
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_millis(10));
+            let mut interval = tokio::time::interval(Duration::from_millis(receive_interval));
             loop {
                 interval.tick().await;
                 match rx.try_recv() {
@@ -63,7 +67,7 @@ pub async fn ping_targets(sender: PingSender) {
                         Ok(_) => success_count.with_label_values(&[target.clone()]).inc(),
                         Err(_) => failure_count.with_label_values(&[target.clone()]).inc(),
                     },
-                    Err(TryRecvError::Empty) => {}
+                    Err(TryRecvError::Empty) => continue,
                     Err(TryRecvError::Disconnected) => panic!("send disconnected"),
                 }
             }
@@ -90,7 +94,7 @@ impl Dispatcher {
     fn new(target: String, ping_interval_ms: u64) -> Result<(Self, Receiver<Result<()>>)> {
         let client = surge_ping::Client::new(&Config::new())?;
 
-        let (result_tx, result_rx) = tokio::sync::mpsc::channel(100);
+        let (result_tx, result_rx) = tokio::sync::mpsc::channel(5);
         Ok((
             Self {
                 target,
