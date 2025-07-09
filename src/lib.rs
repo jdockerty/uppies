@@ -3,6 +3,7 @@ use std::{net::IpAddr, str::FromStr, time::Duration};
 use prometheus::{IntCounterVec, Opts, Registry};
 use surge_ping::{Client, Config, PingIdentifier, PingSequence};
 use tokio::sync::mpsc::{error::TryRecvError, Receiver, Sender};
+use tracing::{debug, error};
 
 pub type Result<T, E = Box<dyn std::error::Error + Send + Sync>> = std::result::Result<T, E>;
 
@@ -119,11 +120,11 @@ impl Dispatcher {
             interval.tick().await;
             match pinger.ping(PingSequence(0), &[]).await {
                 Ok((_, duration)) => {
-                    println!("{}: {duration:?}", self.target);
+                    debug!(target = self.target, ?duration, "ping success");
                     self.result_tx.send(Ok(())).await?;
                 }
                 Err(e) => {
-                    eprintln!("{e}");
+                    error!(target = self.target, ?e, "ping failure");
                     self.result_tx.send(Err(Box::new(e))).await?;
                 }
             }
