@@ -22,7 +22,7 @@ pub struct PingSender {
 }
 
 impl PingSender {
-    const LABELS: &[&str] = &["targets"];
+    const LABELS: &[&str] = &["target"];
 
     pub fn new(targets: Vec<String>, ping_interval_ms: u64, metrics: &Registry) -> Result<Self> {
         let success_count = IntCounterVec::new(
@@ -133,5 +133,103 @@ impl Dispatcher {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::time::Duration;
+
+    use prometheus::{
+        core::{Atomic, GenericCounterVec},
+        Registry,
+    };
+
+    use crate::{ping_targets, Dispatcher, PingSender};
+
+    const LOCALHOST: &str = "127.0.0.1";
+    const TEST_DURATION_MS: u64 = 200;
+
+    #[tokio::test]
+    async fn dispatcher_success() {
+        let (dispatcher, mut rx) =
+            Dispatcher::new(LOCALHOST.to_string(), TEST_DURATION_MS).unwrap();
+        tokio::spawn(dispatcher.run());
+
+        let res = tokio::time::timeout(Duration::from_millis(TEST_DURATION_MS * 3), async move {
+            loop {
+                match rx.recv().await {
+                    Some(res) => return res,
+                    None => continue,
+                }
+            }
+        })
+        .await
+        .expect("no success received");
+
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn dispatcher_failure() {
+        let unbound_addr = "10.0.0.200"; // this could be flakey
+        let (dispatcher, mut rx) =
+            Dispatcher::new(unbound_addr.to_string(), TEST_DURATION_MS).unwrap();
+        tokio::spawn(dispatcher.run());
+
+        // Use an increased timeout, the default in the client is 2s before
+        // an error will be served back.
+        // TODO: create `Dispatcher::with_pinger`?
+        let res = tokio::time::timeout(Duration::from_secs(5), async move {
+            loop {
+                match rx.recv().await {
+                    Some(res) => return res,
+                    None => continue,
+                }
+            }
+        })
+        .await
+        .expect("no success received");
+
+        assert!(res.is_err());
+    }
+
+    fn get_metric_value<P: Atomic>(metric_value: GenericCounterVec<P>, target: &str) -> P::T {
+        metric_value
+            .get_metric_with_label_values(&[target])
+            .unwrap()
+            .get()
+    }
+
+    #[tokio::test]
+    async fn pings() {
+        let metrics = Registry::new();
+        let ping_sender = PingSender::new(
+            [LOCALHOST, LOCALHOST]
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect(),
+            TEST_DURATION_MS,
+            &metrics,
+        )
+        .unwrap();
+
+        let success_count = ping_sender.success_count.clone();
+        let failure_count = ping_sender.failure_count.clone();
+
+        tokio::spawn(ping_targets(ping_sender));
+
+        // Let the sender run in the background before asserting
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        assert!(
+            get_metric_value(success_count, LOCALHOST) > 0,
+            "Success counter should have increased"
+        );
+        assert_eq!(
+            get_metric_value(failure_count, LOCALHOST),
+            0,
+            "Failure counter should still be 0"
+        );
     }
 }
