@@ -22,7 +22,7 @@ pub struct PingSender {
 }
 
 impl PingSender {
-    const LABELS: &[&str] = &["targets"];
+    const LABELS: &[&str] = &["target"];
 
     pub fn new(targets: Vec<String>, ping_interval_ms: u64, metrics: &Registry) -> Result<Self> {
         let success_count = IntCounterVec::new(
