@@ -57,7 +57,7 @@ pub async fn ping_targets(sender: PingSender) {
         let receive_interval = dispatcher.ping_interval_ms.div_ceil(2);
         let target = dispatcher.target.clone();
         info!(target, "starting dispatcher tasks");
-        tokio::spawn(dispatcher.run());
+        tokio::spawn(dispatcher.run(None));
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(receive_interval));
             loop {
@@ -108,9 +108,12 @@ impl Dispatcher {
 
     /// Run this dispatcher, performing the ping operation to the given target.
     ///
+    /// A `timeout` can be provided, which alters the length of time before
+    /// a timeout error is issued for the dispatched ping against a target.
+    ///
     /// This is a blocking call and will perform continuous pings against
     /// the target.
-    async fn run(self) -> Result<()> {
+    async fn run(self, timeout: Option<Duration>) -> Result<()> {
         let mut pinger = self
             .client
             .pinger(
@@ -118,6 +121,10 @@ impl Dispatcher {
                 PingIdentifier(rand::random()),
             )
             .await;
+
+        if let Some(timeout) = timeout {
+            pinger.timeout(timeout);
+        }
 
         let mut interval = tokio::time::interval(Duration::from_millis(self.ping_interval_ms));
         loop {
@@ -154,7 +161,7 @@ mod test {
     async fn dispatcher_success() {
         let (dispatcher, mut rx) =
             Dispatcher::new(LOCALHOST.to_string(), TEST_DURATION_MS).unwrap();
-        tokio::spawn(dispatcher.run());
+        tokio::spawn(dispatcher.run(None));
 
         let res = tokio::time::timeout(Duration::from_millis(TEST_DURATION_MS * 3), async move {
             loop {
@@ -175,12 +182,9 @@ mod test {
         let unbound_addr = "10.0.0.200"; // this could be flakey
         let (dispatcher, mut rx) =
             Dispatcher::new(unbound_addr.to_string(), TEST_DURATION_MS).unwrap();
-        tokio::spawn(dispatcher.run());
+        tokio::spawn(dispatcher.run(Some(Duration::from_millis(100)))); // short time-out duration
 
-        // Use an increased timeout, the default in the client is 2s before
-        // an error will be served back.
-        // TODO: create `Dispatcher::with_pinger`?
-        let res = tokio::time::timeout(Duration::from_secs(5), async move {
+        let res = tokio::time::timeout(Duration::from_secs(1), async move {
             loop {
                 match rx.recv().await {
                     Some(res) => return res,
