@@ -1,6 +1,6 @@
 use std::{net::IpAddr, str::FromStr, time::Duration};
 
-use prometheus::{IntCounterVec, Opts, Registry};
+use prometheus::{HistogramOpts, HistogramVec, IntCounterVec, Opts, Registry};
 use surge_ping::{Client, Config, PingIdentifier, PingSequence};
 use tokio::sync::mpsc::{error::TryRecvError, Receiver, Sender};
 use tracing::{debug, error, info};
@@ -13,12 +13,15 @@ pub struct PingSender {
     ///
     /// The corresponding [`Receiver`] returns the result dependent on the outcome
     /// of the pin.g
-    dispatchers: Vec<(Dispatcher, Receiver<Result<()>>)>,
+    dispatchers: Vec<(Dispatcher, Receiver<Result<Duration>>)>,
 
     /// Number of pings which were successful, labelled by the underlying target.
     success_count: IntCounterVec,
     /// Number of pings which were unsuccessful, labelled by the underlying target.
     failure_count: IntCounterVec,
+
+    /// Histogram of ping durations in milliseconds, labelled by the underlying target.
+    ping_duration_ms: HistogramVec,
 }
 
 impl PingSender {
@@ -33,8 +36,19 @@ impl PingSender {
             Opts::new("ping_failure_count", "Counter of failed pings"),
             Self::LABELS,
         )?;
+        let ping_duration_ms = HistogramVec::new(
+            HistogramOpts::new(
+                "ping_duration_ms",
+                "Histogram of ping round-trip times in milliseconds",
+            )
+            .buckets(vec![
+                1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0,
+            ]),
+            Self::LABELS,
+        )?;
         metrics.register(Box::new(success_count.clone()))?;
         metrics.register(Box::new(failure_count.clone()))?;
+        metrics.register(Box::new(ping_duration_ms.clone()))?;
         Ok(Self {
             dispatchers: targets
                 .iter()
@@ -42,6 +56,7 @@ impl PingSender {
                 .collect::<Result<_>>()?,
             success_count,
             failure_count,
+            ping_duration_ms,
         })
     }
 }
@@ -51,6 +66,7 @@ pub async fn ping_targets(sender: PingSender) {
     for (dispatcher, mut rx) in sender.dispatchers {
         let success_count = sender.success_count.clone();
         let failure_count = sender.failure_count.clone();
+        let ping_duration_ms = sender.ping_duration_ms.clone();
 
         // Check the receive channel 2x faster than the known ping interval
         // to ensure that all sends are caught in good time.
@@ -64,7 +80,12 @@ pub async fn ping_targets(sender: PingSender) {
                 interval.tick().await;
                 match rx.try_recv() {
                     Ok(res) => match res {
-                        Ok(_) => success_count.with_label_values(&[target.clone()]).inc(),
+                        Ok(d) => {
+                            success_count.with_label_values(&[target.clone()]).inc();
+                            ping_duration_ms
+                                .with_label_values(&[target.clone()])
+                                .observe(d.as_millis() as f64);
+                        }
                         Err(_) => failure_count.with_label_values(&[target.clone()]).inc(),
                     },
                     Err(TryRecvError::Empty) => continue,
@@ -83,7 +104,7 @@ struct Dispatcher {
     /// Internal client used to send ICMP packets.
     client: Client,
     /// Result channel for receiving dispatched ping results.
-    result_tx: Sender<Result<()>>,
+    result_tx: Sender<Result<Duration>>,
 
     ping_interval_ms: u64,
 }
@@ -91,7 +112,7 @@ struct Dispatcher {
 impl Dispatcher {
     /// Create a new [`Dispatcher`] with an accompanying [`Receiver`] that
     /// will be used to send ping results into.
-    fn new(target: String, ping_interval_ms: u64) -> Result<(Self, Receiver<Result<()>>)> {
+    fn new(target: String, ping_interval_ms: u64) -> Result<(Self, Receiver<Result<Duration>>)> {
         let client = surge_ping::Client::new(&Config::new())?;
 
         let (result_tx, result_rx) = tokio::sync::mpsc::channel(5);
@@ -132,7 +153,7 @@ impl Dispatcher {
             match pinger.ping(PingSequence(0), &[]).await {
                 Ok((_, duration)) => {
                     debug!(target = self.target, ?duration, "ping success");
-                    self.result_tx.send(Ok(())).await?;
+                    self.result_tx.send(Ok(duration)).await?;
                 }
                 Err(e) => {
                     error!(target = self.target, ?e, "ping failure");
@@ -220,6 +241,7 @@ mod test {
 
         let success_count = ping_sender.success_count.clone();
         let failure_count = ping_sender.failure_count.clone();
+        let ping_duration_histogram = ping_sender.ping_duration_ms.clone();
 
         tokio::spawn(ping_targets(ping_sender));
 
@@ -234,6 +256,12 @@ mod test {
             get_metric_value(failure_count, LOCALHOST),
             0,
             "Failure counter should still be 0"
+        );
+        assert!(
+            ping_duration_histogram
+                .with_label_values(&[LOCALHOST])
+                .get_sample_count()
+                > 0
         );
     }
 }
