@@ -141,7 +141,7 @@ mod test {
     use std::time::Duration;
 
     use prometheus::{
-        core::{Atomic, GenericCounter, GenericCounterVec},
+        core::{Atomic, GenericCounterVec},
         Registry,
     };
 
