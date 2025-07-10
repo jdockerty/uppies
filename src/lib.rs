@@ -135,3 +135,57 @@ impl Dispatcher {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::time::Duration;
+
+    use crate::Dispatcher;
+
+    const LOCALHOST: &str = "127.0.0.1";
+    const TEST_DURATION_MS: u64 = 200;
+
+    #[tokio::test]
+    async fn dispatcher_success() {
+        let (dispatcher, mut rx) =
+            Dispatcher::new(LOCALHOST.to_string(), TEST_DURATION_MS).unwrap();
+        tokio::spawn(dispatcher.run());
+
+        let res = tokio::time::timeout(Duration::from_millis(TEST_DURATION_MS * 3), async move {
+            loop {
+                match rx.recv().await {
+                    Some(res) => return res,
+                    None => continue,
+                }
+            }
+        })
+        .await
+        .expect("no success received");
+
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn dispatcher_failure() {
+        let unbound_addr = "10.0.0.200"; // this could be flakey
+        let (dispatcher, mut rx) =
+            Dispatcher::new(unbound_addr.to_string(), TEST_DURATION_MS).unwrap();
+        tokio::spawn(dispatcher.run());
+
+        // Use an increased timeout, the default in the client is 2s before
+        // an error will be served back.
+        // TODO: create `Dispatcher::with_pinger`?
+        let res = tokio::time::timeout(Duration::from_secs(5), async move {
+            loop {
+                match rx.recv().await {
+                    Some(res) => return res,
+                    None => continue,
+                }
+            }
+        })
+        .await
+        .expect("no success received");
+
+        assert!(res.is_err());
+    }
+}
