@@ -140,7 +140,12 @@ impl Dispatcher {
 mod test {
     use std::time::Duration;
 
-    use crate::Dispatcher;
+    use prometheus::{
+        core::{Atomic, GenericCounter, GenericCounterVec},
+        Registry,
+    };
+
+    use crate::{ping_targets, Dispatcher, PingSender};
 
     const LOCALHOST: &str = "127.0.0.1";
     const TEST_DURATION_MS: u64 = 200;
@@ -187,5 +192,44 @@ mod test {
         .expect("no success received");
 
         assert!(res.is_err());
+    }
+
+    fn get_metric_value<P: Atomic>(metric_value: GenericCounterVec<P>, target: &str) -> P::T {
+        metric_value
+            .get_metric_with_label_values(&[target])
+            .unwrap()
+            .get()
+    }
+
+    #[tokio::test]
+    async fn pings() {
+        let metrics = Registry::new();
+        let ping_sender = PingSender::new(
+            [LOCALHOST, LOCALHOST]
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect(),
+            TEST_DURATION_MS,
+            &metrics,
+        )
+        .unwrap();
+
+        let success_count = ping_sender.success_count.clone();
+        let failure_count = ping_sender.failure_count.clone();
+
+        tokio::spawn(ping_targets(ping_sender));
+
+        // Let the sender run in the background before asserting
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        assert!(
+            get_metric_value(success_count, LOCALHOST) > 0,
+            "Success counter should have increased"
+        );
+        assert_eq!(
+            get_metric_value(failure_count, LOCALHOST),
+            0,
+            "Failure counter should still be 0"
+        );
     }
 }
