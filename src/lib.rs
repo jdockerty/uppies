@@ -73,6 +73,10 @@ pub async fn ping_targets(sender: PingSender) {
         let receive_interval = dispatcher.ping_interval_ms.div_ceil(2);
         let target = dispatcher.target.clone();
         info!(target, "starting dispatcher tasks");
+        // Initialise the value on start, this allows the
+        // metric to be immediately reported as 0 if there are no
+        // errors for sometime.
+        failure_count.with_label_values(&[target.clone()]).inc_by(0);
         tokio::spawn(dispatcher.run(None));
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(receive_interval));
